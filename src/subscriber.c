@@ -1,4 +1,5 @@
-// subscriber.c
+#include "../include/protocol.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
