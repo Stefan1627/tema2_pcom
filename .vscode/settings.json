@@ -62,6 +62,9 @@
 	"in.h": "c",
 	"tcp.h": "c",
 	"inet.h": "c",
-	"socket.h": "c"
+	"socket.h": "c",
+	"client_server.h": "c",
+	"topic_trie.h": "c",
+	"stdio.h": "c"
 }
 }

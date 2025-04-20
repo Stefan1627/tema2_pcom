@@ -3,15 +3,28 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "topic_trie.h"
+#include "protocol.h"
+#include <arpa/inet.h>
+#include <netinet/tcp.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdbool.h>
 
 #define READ_BUF_SIZE 2048
+
+typedef struct sub_ref sub_ref_t;
 
 typedef struct client {
     int             fd;             // socket
     char            id[16];         // client identifier
-    uint8_t         read_buf[READ_BUF_SIZE];
+    char            read_buf[READ_BUF_SIZE];
     size_t          read_buf_len;   // how many bytes are in read_buf
     struct client  *next;
+
+	sub_ref_t    *subscriptions;
 } client_t;
 
 // Allocate, initialize (incl. TCP_NODELAY), return NULL on error

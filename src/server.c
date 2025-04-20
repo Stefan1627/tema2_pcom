@@ -1,16 +1,31 @@
 #include "../include/client_server.h"
 #include "../include/protocol.h"
+#include "../include/topic_trie.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <string.h>
 #include <poll.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include <unistd.h>
 
 #define MAX_UDP_PAYLOAD 1500
+#define MAX_TOPIC_LEN 50
+
+char *extract_topic(char *msg) {
+    if (!msg) return NULL;
+
+    char *topic = malloc(MAX_TOPIC_LEN + 1);
+    if (!topic) return NULL;
+
+    int i;
+    for (i = 0; i < MAX_TOPIC_LEN && msg[i] != '\0'; i++) {
+        topic[i] = msg[i];
+    }
+    topic[i] = '\0';
+
+	size_t rem_len = strlen(msg + i + 1);
+    memmove(msg, msg + i + 1, rem_len + 1);
+
+    return topic;
+}
 
 void run_server(int port) {
     // set up UDP socket
@@ -38,8 +53,7 @@ void run_server(int port) {
     client_t *clients = NULL;
     int        client_count = 0;
     int        exit_flag    = 0;
-
-    printf("Server listening on port %d\n", port);
+	trie_init();
 
     while (!exit_flag) {
         int nfds = 3 + client_count;
@@ -70,18 +84,14 @@ void run_server(int port) {
 
         // — incoming UDP?
         if (pfds[idx].revents & POLLIN) {
-            uint8_t buf[MAX_UDP_PAYLOAD];
+            char buf[MAX_UDP_PAYLOAD];
             struct sockaddr_in src;
             socklen_t slen = sizeof(src);
             ssize_t n = recvfrom(udp_fd, buf, sizeof(buf), 0,
                                  (struct sockaddr*)&src, &slen);
             if (n > 0) {
-                // wrap+forward to all clients
-                for (client_t *c = clients; c; c = c->next) {
-                    if (send_message(c->fd, MSG_PUBLISH, buf, n) < 0) {
-                        perror("forward");
-                    }
-                }
+				char *topic = extract_topic(buf);
+                trie_publish(topic, buf, n);
             }
         }
         idx++;
@@ -112,12 +122,13 @@ void run_server(int port) {
                             nc->next = clients;
                             clients  = nc;
                             client_count++;
-                            printf("New client %s connected from %s:%d.\n",
+                            fprintf(stdout, "New client %s connected from %s:%d.\n",
 								nc->id,
 								inet_ntoa(cli.sin_addr),
 								ntohs(cli.sin_port));
                         }
                     } else {
+						printf("Client %s already connected.\n", id);
                         close(newfd);
                     }
                 } else {
@@ -133,7 +144,7 @@ void run_server(int port) {
             if (pfds[idx].revents & (POLLIN|POLLHUP|POLLERR)) {
                 if (client_handle_data(cur) < 0) {
                     // tear down
-                    printf("Client %s disconnected\n", cur->id);
+                    printf("Client %s disconnected.\n", cur->id);
                     client_count--;
                     client_t *dead = cur;
                     cur = cur->next;
@@ -163,6 +174,8 @@ void run_server(int port) {
 }
 
 int main(int argc, char **argv) {
+	setvbuf(stdout, NULL, _IONBF, BUFSIZ);
+
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <port>\n", argv[0]);
         return 1;

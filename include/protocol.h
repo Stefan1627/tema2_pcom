@@ -8,6 +8,8 @@
 #define MSG_SUBSCRIBE   1
 #define MSG_UNSUBSCRIBE 2
 #define MSG_PUBLISH     3
+#define MSG_SUBSCRIBE_ACK 4
+#define MSG_UNSUBSCRIBE_ACK 5
 
 // packed 2‑byte type + 4‑byte payload length
 #pragma pack(push,1)
