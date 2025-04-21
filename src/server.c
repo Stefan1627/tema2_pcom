@@ -5,38 +5,53 @@
 #include <poll.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdbool.h>
 
 #define MAX_UDP_PAYLOAD 1500
-#define MAX_TOPIC_LEN 50
+#define MAX_TOPIC_LEN   50
 
-char *extract_topic(char *msg) {
+ssize_t build_packet(struct sockaddr_in src,
+                     char *buf,
+                     ssize_t payload_len)
+{
+    char header[INET_ADDRSTRLEN + 1 /*null*/ + 6 /*port*/ + 2 /*spaces*/];
+    int header_len = snprintf(
+        header, sizeof(header),
+        "%s %u ",
+        inet_ntoa(src.sin_addr),
+        ntohs(src.sin_port));
+    if (header_len < 0 || header_len >= (int)sizeof(header)) {
+        return payload_len;
+    }
+    memmove(buf + header_len, buf, payload_len);
+    memcpy(buf, header, header_len);
+    return header_len + payload_len;
+}
+
+char *extract_topic(char *msg)
+{
     if (!msg) return NULL;
-
     char *topic = malloc(MAX_TOPIC_LEN + 1);
     if (!topic) return NULL;
-
     int i;
     for (i = 0; i < MAX_TOPIC_LEN && msg[i] != '\0'; i++) {
         topic[i] = msg[i];
     }
     topic[i] = '\0';
-
-	size_t rem_len = strlen(msg + i + 1);
-    memmove(msg, msg + i + 1, rem_len + 1);
-
     return topic;
 }
 
-void run_server(int port) {
-    // set up UDP socket
+void run_server(int port)
+{
+    // 1) Setup sockets
     int udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (udp_fd < 0) { perror("socket udp"); exit(1); }
-
-    // set up TCP socket
     int tcp_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (tcp_fd < 0) { perror("socket tcp"); exit(1); }
-
-    // reuse addr
     int one = 1;
     setsockopt(udp_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
     setsockopt(tcp_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
@@ -46,35 +61,41 @@ void run_server(int port) {
         .sin_port        = htons(port),
         .sin_addr.s_addr = INADDR_ANY
     };
-    bind(udp_fd, (struct sockaddr*)&addr, sizeof(addr));
-    bind(tcp_fd, (struct sockaddr*)&addr, sizeof(addr));
+    bind(udp_fd, (struct sockaddr *)&addr, sizeof(addr));
+    bind(tcp_fd, (struct sockaddr *)&addr, sizeof(addr));
     listen(tcp_fd, SOMAXCONN);
 
-    client_t *clients = NULL;
-    int        client_count = 0;
-    int        exit_flag    = 0;
-	trie_init();
+    // 2) Client lists: active and inactive (to preserve subscriptions)
+    client_t *clients          = NULL;
+    client_t *inactive_clients = NULL;
+    int      client_count      = 0;
+    int      exit_flag         = 0;
+
+    trie_init();
 
     while (!exit_flag) {
+        // build poll fds
         int nfds = 3 + client_count;
         struct pollfd *pfds = malloc(nfds * sizeof(*pfds));
 
-        // index 0 = stdin, 1 = udp, 2 = tcp
+        // 0 = stdin, 1 = udp, 2 = tcp accept
         pfds[0] = (struct pollfd){ .fd = STDIN_FILENO, .events = POLLIN };
         pfds[1] = (struct pollfd){ .fd = udp_fd,       .events = POLLIN };
         pfds[2] = (struct pollfd){ .fd = tcp_fd,       .events = POLLIN };
 
         int idx = 3;
-        for (client_t *c = clients; c; c = c->next, idx++) {
-            pfds[idx] = (struct pollfd){ .fd = c->fd, .events = POLLIN };
+        for (client_t *c = clients; c; c = c->next) {
+            pfds[idx++] = (struct pollfd){ .fd = c->fd, .events = POLLIN };
         }
 
         if (poll(pfds, nfds, -1) < 0) {
-            perror("poll"); free(pfds); break;
+            perror("poll");
+            free(pfds);
+            break;
         }
 
         idx = 0;
-        // — exit on stdin
+        // — exit on stdin —
         if (pfds[idx++].revents & POLLIN) {
             char buf[32];
             if (fgets(buf, sizeof(buf), stdin) &&
@@ -82,54 +103,87 @@ void run_server(int port) {
                 exit_flag = 1;
         }
 
-        // — incoming UDP?
+        // — incoming UDP? —
         if (pfds[idx].revents & POLLIN) {
             char buf[MAX_UDP_PAYLOAD];
             struct sockaddr_in src;
             socklen_t slen = sizeof(src);
             ssize_t n = recvfrom(udp_fd, buf, sizeof(buf), 0,
-                                 (struct sockaddr*)&src, &slen);
+                                 (struct sockaddr *)&src, &slen);
             if (n > 0) {
-				char *topic = extract_topic(buf);
+                char *topic = extract_topic(buf);
+                n = build_packet(src, buf, n);
                 trie_publish(topic, buf, n);
+                free(topic);
             }
         }
         idx++;
 
-        // — new TCP connection?
+        // — new TCP connection? —
         if (pfds[idx].revents & POLLIN) {
             struct sockaddr_in cli;
             socklen_t clilen = sizeof(cli);
             int newfd = accept(tcp_fd,
-                               (struct sockaddr*)&cli,
+                               (struct sockaddr *)&cli,
                                &clilen);
             if (newfd >= 0) {
-                // read client ID once
                 char id[16];
-                ssize_t len = recv(newfd, id, sizeof(id)-1, 0);
+                ssize_t len = recv(newfd, id, sizeof(id) - 1, 0);
                 if (len > 0) {
                     id[len] = '\0';
                     id[strcspn(id, "\r\n")] = '\0';
 
-                    // check duplicate
-                    bool dup = false;
+                    // check if already active
+                    bool is_active = false;
                     for (client_t *it = clients; it; it = it->next) {
-                        if (strcmp(it->id, id) == 0) { dup = true; break; }
+                        if (strcmp(it->id, id) == 0) {
+                            is_active = true;
+                            break;
+                        }
                     }
-                    if (!dup) {
-                        client_t *nc = client_create(newfd, id);
-                        if (nc) {
-                            nc->next = clients;
-                            clients  = nc;
+                    if (is_active) {
+                        printf("Client %s already connected.\n", id);
+                        close(newfd);
+                    } else {
+                        // check inactive list for reconnection
+                        client_t *prev_in = NULL, *it = inactive_clients;
+                        while (it) {
+                            if (strcmp(it->id, id) == 0) break;
+                            prev_in = it;
+                            it = it->next;
+                        }
+                        if (it) {
+                            // reconnect existing client
+                            client_t *reconn = it;
+                            // unlink from inactive
+                            if (prev_in) prev_in->next = reconn->next;
+                            else          inactive_clients = reconn->next;
+
+                            reconn->fd            = newfd;
+                            reconn->read_buf_len  = 0;
+                            reconn->next          = clients;
+                            clients               = reconn;
                             client_count++;
-                            fprintf(stdout, "New client %s connected from %s:%d.\n",
-								nc->id,
+
+                            printf("New client %s connected from %s:%d.\n",
+								reconn->id,
 								inet_ntoa(cli.sin_addr),
 								ntohs(cli.sin_port));
+                        } else {
+                            // brand‑new client
+                            client_t *nc = client_create(newfd, id);
+                            if (nc) {
+                                nc->next = clients;
+                                clients  = nc;
+                                client_count++;
+                                printf("New client %s connected from %s:%d.\n",
+                                       nc->id,
+                                       inet_ntoa(cli.sin_addr),
+                                       ntohs(cli.sin_port));
+                            } else {
+                                close(newfd);
+                            }
                         }
-                    } else {
-						printf("Client %s already connected.\n", id);
-                        close(newfd);
                     }
                 } else {
                     close(newfd);
@@ -141,16 +195,23 @@ void run_server(int port) {
         // — handle TCP client data / disconnect —
         client_t *prev = NULL, *cur = clients;
         while (cur) {
-            if (pfds[idx].revents & (POLLIN|POLLHUP|POLLERR)) {
+            if (pfds[idx].revents & (POLLIN | POLLHUP | POLLERR)) {
                 if (client_handle_data(cur) < 0) {
-                    // tear down
+                    // client disconnected: keep subscriptions
                     printf("Client %s disconnected.\n", cur->id);
                     client_count--;
+
                     client_t *dead = cur;
                     cur = cur->next;
                     if (prev) prev->next = cur;
-                    else       clients   = cur;
-                    client_destroy(dead);
+                    else       clients = cur;
+
+                    // move to inactive list
+                    close(dead->fd);
+                    dead->fd  = -1;
+                    dead->next = inactive_clients;
+                    inactive_clients = dead;
+
                     idx++;
                     continue;
                 }
@@ -163,18 +224,22 @@ void run_server(int port) {
         free(pfds);
     }
 
-    // cleanup
+    // — final cleanup —
     for (client_t *c = clients; c; ) {
-        client_t *tmp = c;
-        c = c->next;
+        client_t *tmp = c; c = c->next;
+        client_destroy(tmp);
+    }
+    for (client_t *c = inactive_clients; c; ) {
+        client_t *tmp = c; c = c->next;
         client_destroy(tmp);
     }
     close(tcp_fd);
     close(udp_fd);
 }
 
-int main(int argc, char **argv) {
-	setvbuf(stdout, NULL, _IONBF, BUFSIZ);
+int main(int argc, char **argv)
+{
+    setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <port>\n", argv[0]);

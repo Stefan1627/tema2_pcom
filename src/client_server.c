@@ -21,61 +21,80 @@ void client_destroy(client_t *c) {
     free(c);
 }
 
+
 int client_handle_data(client_t *c) {
-	int ret = 0;
-    // read whatever arrived
+    const size_t HDR_SIZE = sizeof(uint16_t) + sizeof(uint32_t);
+
+    // 1) Read from socket
     ssize_t r = recv(c->fd,
                      c->read_buf + c->read_buf_len,
                      READ_BUF_SIZE - c->read_buf_len,
                      0);
-
-	// diconnected or error
-    if (r <= 0) return -1;
-
+    if (r <= 0) {
+        // disconnected or error
+        return -1;
+    }
     c->read_buf_len += r;
+
     size_t off = 0;
+    // 2) Loop as long as we have at least a header’s worth
+    while (c->read_buf_len - off >= HDR_SIZE) {
+        // 2a) Pull out raw header fields
+        uint16_t type_net;
+        uint32_t len_net;
+        memcpy(&type_net,
+               c->read_buf + off,
+               sizeof(type_net));
+        memcpy(&len_net,
+               c->read_buf + off + sizeof(type_net),
+               sizeof(len_net));
 
-    // parse as many full messages as possible
-    while (c->read_buf_len - off >= sizeof(MsgHeader)) {
-        MsgHeader hdr;
-        memcpy(&hdr, c->read_buf + off, sizeof(hdr));
-        uint16_t type = ntohs(hdr.type);
-        uint32_t len  = ntohl(hdr.length);
+        uint16_t type = ntohs(type_net);
+        uint32_t len  = ntohl(len_net);
 
-		// not a full payload yet
-        if (c->read_buf_len - off < sizeof(hdr) + len)
+        // 2b) Sanity‑check length
+        if (len > READ_BUF_SIZE - HDR_SIZE) {
+            fprintf(stderr,
+                    "client_handle_data: bogus length %u, dropping client\n",
+                    len);
+            return -1;
+        }
+
+        // 2c) Wait until full payload arrives
+        if (c->read_buf_len - off < HDR_SIZE + len)
             break;
 
-        char *payload = c->read_buf + off + sizeof(hdr);
-
+        char *payload = c->read_buf + off + HDR_SIZE;
+		payload[len] = '\0';
         switch (type) {
-        case MSG_SUBSCRIBE: {
-			ret = trie_subscribe(c, payload);
-			if (ret < 0) return -1;
-			else send_message(c->fd, MSG_SUBSCRIBE_ACK, payload, len);
+        case MSG_SUBSCRIBE:
+            if (trie_subscribe(c, payload) < 0)
+                return -1;
+            send_message(c->fd, MSG_SUBSCRIBE_ACK, payload, len);
             break;
-			}
 
         case MSG_UNSUBSCRIBE:
-			ret = trie_unsubscribe(c, payload);
-			if (ret < 0) return -1;
-			else send_message(c->fd, MSG_UNSUBSCRIBE_ACK, payload, len);
+            if (trie_unsubscribe(c, payload) < 0)
+                return -1;
+            send_message(c->fd, MSG_UNSUBSCRIBE_ACK, payload, len);
             break;
 
         default:
-            // ignore or error
+            // ignore unknown types
             break;
         }
 
-        off += sizeof(hdr) + len;
+        // advance past this message
+        off += HDR_SIZE + len;
     }
 
-    // compact any leftover bytes
+    // 3) Compact any leftover bytes
     if (off > 0) {
         memmove(c->read_buf,
                 c->read_buf + off,
                 c->read_buf_len - off);
         c->read_buf_len -= off;
     }
+
     return 0;
 }
