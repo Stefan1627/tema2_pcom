@@ -4,9 +4,6 @@
 
 #include "client_server.h"
 #include "protocol.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 typedef struct client client_t;
 
@@ -48,11 +45,12 @@ typedef struct sub_ref {
     struct sub_ref   *next;
 } sub_ref_t;
 
-
-void trie_init(void);
-int trie_subscribe(client_t *cl, const char *pattern);
-int trie_unsubscribe(client_t *cl, const char *pattern);
-void trie_publish(const char *topic, const char *buf, size_t len);
-void cleanup_client_subscriptions(client_t *cl);
+topic_node_t *node_create(topic_node_t *parent,
+						  child_type_t ptype,
+						  const char *pname);
+int trie_subscribe(topic_node_t *root, client_t *cl, const char *pattern);
+int trie_unsubscribe(topic_node_t *root, client_t *cl, const char *pattern);
+void trie_publish(topic_node_t *root, const char *topic, const char *buf, size_t len);
+void cleanup_client_subscriptions(topic_node_t *root, client_t *cl);
 
 #endif // TOPIC_TRIE_H

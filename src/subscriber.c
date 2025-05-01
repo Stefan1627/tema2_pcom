@@ -1,29 +1,17 @@
+// 324CC Stefan CALMAC
 #include "../include/protocol.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <errno.h>
-
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/select.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 
 #define SUB_LEN 10
 #define UNSUB_LEN 12
 #define READ_BUF_SIZE 2048
-#define MAX_TOPIC_LEN 50
 
-// Read exactly `len` bytes (or return 0/EOS or -1 on error)
+// recv_all: read exactly `len` bytes from `sockfd` into `buf`
+// returns number of bytes read (== len), 0 on orderly shutdown, or -1 on error
 static ssize_t recv_all(int sockfd, void *buf, size_t len)
 {
 	size_t total = 0;
 	char *p = buf;
-	while (total < len)
-	{
+	while (total < len) {
 		ssize_t r = recv(sockfd, p + total, len - total, 0);
 		if (r < 0)
 			return -1; // error
@@ -36,8 +24,7 @@ static ssize_t recv_all(int sockfd, void *buf, size_t len)
 
 void process_payload(char *payload, size_t len)
 {
-	if (len < 1)
-	{
+	if (len < 1) {
 		fprintf(stderr, "Empty payload\n");
 		return;
 	}
@@ -49,8 +36,7 @@ void process_payload(char *payload, size_t len)
 	{
 	case 0:
 	{ // INT
-		if (remain < 5)
-		{
+		if (remain < 5) {
 			fprintf(stderr, "Payload too short for INT\n");
 			return;
 		}
@@ -65,8 +51,7 @@ void process_payload(char *payload, size_t len)
 	}
 	case 1:
 	{ // SHORT_REAL
-		if (remain < 2)
-		{
+		if (remain < 2) {
 			fprintf(stderr, "Payload too short for SHORT_REAL\n");
 			return;
 		}
@@ -77,8 +62,7 @@ void process_payload(char *payload, size_t len)
 	}
 	case 2:
 	{ // FLOAT
-		if (remain < 6)
-		{
+		if (remain < 6) {
 			fprintf(stderr, "Payload too short for FLOAT\n");
 			return;
 		}
@@ -109,21 +93,24 @@ void process_payload(char *payload, size_t len)
 	}
 }
 
+// print_packet: parse and display a published message buffer
 void print_packet(char *buf, size_t total_len)
 {
 	char *p = buf, *end = buf + total_len;
 
-	// 1) găseşte ip‑ul (ascii până la primul ' ')
+	// 1) Extract IP (ASCII up to first space)
 	char ip[INET_ADDRSTRLEN] = {0};
 	char *sp = memchr(p, ' ', end - p);
 	if (!sp)
-		return; // format greșit
+		return;
 	size_t ip_len = sp - p;
 	memcpy(ip, p, ip_len);
 	ip[ip_len] = '\0';
-	p = sp + 1; // acum p e la începutul port
 
-	// 2) găseşte portul (ascii până la următorul ' ')
+	// advance p to start of port
+	p = sp + 1;
+
+	// 2) Extract port (ASCII up to next space)
 	char port[6] = {0};
 	sp = memchr(p, ' ', end - p);
 	if (!sp)
@@ -131,9 +118,11 @@ void print_packet(char *buf, size_t total_len)
 	size_t port_len = sp - p;
 	memcpy(port, p, port_len);
 	port[port_len] = '\0';
-	p = sp + 1; // acum p e la începutul topic
 
-	// 3) topic-ul e fix 50 octeţi, nu e NUL‑terminated în buffer
+	// advance p to start of topic
+	p = sp + 1;
+
+	// 3) Extract topic (fixed MAX_TOPIC_LEN bytes, not NUL-terminated)
 	if (p + MAX_TOPIC_LEN > end)
 		return;
 	char topic[MAX_TOPIC_LEN + 1];
@@ -141,21 +130,24 @@ void print_packet(char *buf, size_t total_len)
 	topic[MAX_TOPIC_LEN] = '\0';
 	// taie tot de la primul '\0' adevărat
 	topic[strnlen(topic, MAX_TOPIC_LEN)] = '\0';
-	p += MAX_TOPIC_LEN; // acum p e la byte‑ul data_type
 
-	// 4) restul este payload-ul propriu‑zis
+	// advance p to data_type byte
+	p += MAX_TOPIC_LEN;
+
+	// 4) Remaining bytes are the actual payload
 	size_t payload_len = end - p;
 
 	if (payload_len < 1)
-		return; // nimic de procesat
+		return;
 
-	// 5) tipărește prefixul
+	// 5) Print prefix: "IP:port - topic - "
 	printf("%s:%s - %s - ", ip, port, topic);
 
-	// 6) apelează funcția care decodează payload-ul
+	// 6) Decode and print the payload
 	process_payload(p, payload_len);
 }
 
+// handle_received_data: read a full message (header + payload) and dispatch
 int handle_received_data(int sockfd)
 {
 	MsgHeader hdr;
@@ -166,21 +158,19 @@ int handle_received_data(int sockfd)
 	uint16_t type = ntohs(hdr.type);
 	uint32_t length = ntohl(hdr.length);
 
-	if (length > READ_BUF_SIZE)
-	{
+	// guard against overly large payloads
+	if (length > READ_BUF_SIZE) {
 		fprintf(stderr, "Payload too large: %u bytes\n", length);
 		return -1;
 	}
 
 	char buf[READ_BUF_SIZE];
-	if (recv_all(sockfd, buf, length) != (ssize_t)length)
-	{
+	if (recv_all(sockfd, buf, length) != (ssize_t)length) {
 		fprintf(stderr, "Short read: got less than %u bytes\n", length);
 		return -1;
 	}
 
-	switch (type)
-	{
+	switch (type) {
 	case MSG_PUBLISH:
 		print_packet(buf, length);
 		break;
@@ -203,8 +193,7 @@ int main(int argc, char *argv[])
 {
 	setvbuf(stdout, NULL, _IONBF, 0);
 
-	if (argc != 4)
-	{
+	if (argc != 4) {
 		fprintf(stderr,
 				"Usage: %s <ID_CLIENT> <IP_SERVER> <PORT_SERVER>\n",
 				argv[0]);
@@ -213,15 +202,14 @@ int main(int argc, char *argv[])
 	const char *client_id = argv[1];
 	const char *server_ip = argv[2];
 	int server_port = atoi(argv[3]);
-	if (server_port <= 0)
-	{
+	if (server_port <= 0) {
 		fprintf(stderr, "Invalid port '%s'\n", argv[3]);
 		exit(EXIT_FAILURE);
 	}
 
+	// Create TCP socket and connect to server
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-	if (sockfd < 0)
-	{
+	if (sockfd < 0) {
 		perror("socket");
 		exit(EXIT_FAILURE);
 	}
@@ -231,8 +219,7 @@ int main(int argc, char *argv[])
 	serv.sin_port = htons(server_port);
 	inet_pton(AF_INET, server_ip, &serv.sin_addr);
 
-	if (connect(sockfd, (struct sockaddr *)&serv, sizeof serv) != 0)
-	{
+	if (connect(sockfd, (struct sockaddr *)&serv, sizeof serv) != 0) {
 		perror("connect");
 		exit(EXIT_FAILURE);
 	}
@@ -240,8 +227,7 @@ int main(int argc, char *argv[])
 	// send client ID + newline
 	char initb[32];
 	int L = snprintf(initb, sizeof initb, "%s\n", client_id);
-	if (send(sockfd, initb, L, 0) != L)
-	{
+	if (send(sockfd, initb, L, 0) != L) {
 		perror("send client ID");
 		close(sockfd);
 		exit(EXIT_FAILURE);
@@ -250,57 +236,52 @@ int main(int argc, char *argv[])
 	fd_set fds;
 	int maxfd = sockfd > STDIN_FILENO ? sockfd : STDIN_FILENO;
 
-	while (1)
-	{
+	while (1) {
 		FD_ZERO(&fds);
 		FD_SET(STDIN_FILENO, &fds);
 		FD_SET(sockfd, &fds);
 
-		if (select(maxfd + 1, &fds, NULL, NULL, NULL) < 0)
-		{
+		if (select(maxfd + 1, &fds, NULL, NULL, NULL) < 0) {
 			perror("select");
 			break;
 		}
 
-		// user commands
-		if (FD_ISSET(STDIN_FILENO, &fds))
-		{
+		// Handle user input from stdin
+		if (FD_ISSET(STDIN_FILENO, &fds)) {
 			char line[128];
-			if (!fgets(line, sizeof line, stdin))
-			{
+			if (!fgets(line, sizeof line, stdin)) {
 				// EOF on stdin: just ignore further stdin
 				FD_CLR(STDIN_FILENO, &fds);
 			}
 			// strip newline
 			line[strcspn(line, "\n")] = '\0';
-			if (strcmp(line, "exit") == 0)
-			{
+			if (strcmp(line, "exit") == 0) {
 				// clean shutdown
 				break;
-			}
-			else if (strstr(line, "unsubscribe") != 0)
-			{
-				int ret = send_message(sockfd, MSG_UNSUBSCRIBE, line + UNSUB_LEN, strlen(line) - UNSUB_LEN);
+			} else if (strstr(line, "unsubscribe") != 0) {
+				int ret = send_message(sockfd,
+									   MSG_UNSUBSCRIBE,
+									   line + UNSUB_LEN,
+									   strlen(line) - UNSUB_LEN);
 				if (ret < 0)
 				{
 					perror("send_message");
 					break;
 				}
-			}
-			else if (strstr(line, "subscribe") != 0)
-			{
-				int ret = send_message(sockfd, MSG_SUBSCRIBE, line + SUB_LEN, strlen(line) - SUB_LEN);
-				if (ret < 0)
-				{
+			} else if (strstr(line, "subscribe") != 0) {
+				int ret = send_message(sockfd,
+									   MSG_SUBSCRIBE,
+									   line + SUB_LEN,
+									   strlen(line) - SUB_LEN);
+				if (ret < 0) {
 					perror("send_message");
 					break;
 				}
 			}
 		}
 
-		// server data
-		if (FD_ISSET(sockfd, &fds))
-		{
+		// Handle incoming data from server
+		if (FD_ISSET(sockfd, &fds)) {
 			int rc = handle_received_data(sockfd);
 			if (rc <= 0)
 				break;

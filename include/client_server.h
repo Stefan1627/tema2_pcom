@@ -1,20 +1,12 @@
 #ifndef CLIENT_H
 #define CLIENT_H
 
-#include <stddef.h>
-#include <stdint.h>
 #include "topic_trie.h"
 #include "protocol.h"
-#include <arpa/inet.h>
-#include <netinet/tcp.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <stdbool.h>
 
 #define READ_BUF_SIZE 2048
 
+typedef struct topic_node topic_node_t;
 typedef struct sub_ref sub_ref_t;
 
 typedef struct client {
@@ -31,11 +23,11 @@ typedef struct client {
 client_t *client_create(int fd, const char *id);
 
 // Tear down a client (close + free)
-void client_destroy(client_t *c);
+void client_destroy(topic_node_t *root, client_t *c);
 
 // Read() from c->fd into its buffer, parse as many messages
 // (SUBSCRIBE/UNSUBSCRIBE), compact leftovers.
 // Returns -1 on disconnect/error, 0 otherwise.
-int client_handle_data(client_t *c);
+int client_handle_data(topic_node_t *root, client_t *c);
 
 #endif // CLIENT_H
