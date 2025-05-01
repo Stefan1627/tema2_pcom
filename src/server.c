@@ -44,6 +44,81 @@ char *extract_topic(char *msg)
 	return topic;
 }
 
+/**
+ * Accepts one pending TCP connection on tcp_fd, reads the client ID,
+ * and links it into either the active or inactive client lists.
+ */
+void handle_new_tcp_connection(int tcp_fd,
+							   client_t **clients,
+							   client_t **inactive_clients,
+							   int *client_count)
+{
+	struct sockaddr_in cli;
+	socklen_t clilen = sizeof(cli);
+	int newfd = accept(tcp_fd, (struct sockaddr *)&cli, &clilen);
+	if (newfd < 0) {
+		perror("accept");
+		return;
+	}
+
+	char id[16];
+	ssize_t len = recv(newfd, id, sizeof(id) - 1, 0);
+	if (len <= 0) {
+		close(newfd);
+		return;
+	}
+	id[len] = '\0';
+	id[strcspn(id, "\r\n")] = '\0';
+
+	// Check if already active
+	for (client_t *it = *clients; it; it = it->next) {
+		if (strcmp(it->id, id) == 0) {
+			printf("Client %s already connected.\n", id);
+			close(newfd);
+			return;
+		}
+	}
+
+	// Look for reconnection in inactive list
+	client_t *prev_in = NULL, *it = *inactive_clients;
+	while (it && strcmp(it->id, id) != 0) {
+		prev_in = it;
+		it = it->next;
+	}
+
+	if (it) {
+		// Reconnect existing client
+		if (prev_in)
+			prev_in->next = it->next;
+		else
+			*inactive_clients = it->next;
+
+		it->fd = newfd;
+		it->read_buf_len = 0;
+		it->next = *clients;
+		*clients = it;
+		(*client_count)++;
+		printf("New client %s connected from %s:%d.\n",
+			   it->id,
+			   inet_ntoa(cli.sin_addr),
+			   ntohs(cli.sin_port));
+	} else {
+		// Brand-new client
+		client_t *nc = client_create(newfd, id);
+		if (!nc) {
+			close(newfd);
+			return;
+		}
+		nc->next = *clients;
+		*clients = nc;
+		(*client_count)++;
+		printf("New client %s connected from %s:%d.\n",
+			   nc->id,
+			   inet_ntoa(cli.sin_addr),
+			   ntohs(cli.sin_port));
+	}
+}
+
 void run_server(int port)
 {
 	int one = 1;
@@ -164,78 +239,10 @@ void run_server(int port)
 
 		// — new TCP connection? —
 		if (pfds[idx].revents & POLLIN) {
-			struct sockaddr_in cli;
-			socklen_t clilen = sizeof(cli);
-			int newfd = accept(tcp_fd,
-							   (struct sockaddr *)&cli,
-							   &clilen);
-			if (newfd >= 0) {
-				char id[16];
-				ssize_t len = recv(newfd, id, sizeof(id) - 1, 0);
-				if (len > 0) {
-					id[len] = '\0';
-					id[strcspn(id, "\r\n")] = '\0';
-
-					// check if already active
-					bool is_active = false;
-					for (client_t *it = clients; it; it = it->next) {
-						if (strcmp(it->id, id) == 0) {
-							is_active = true;
-							break;
-						}
-					}
-					if (is_active) {
-						printf("Client %s already connected.\n", id);
-						close(newfd);
-					} else {
-						// check inactive list for reconnection
-						client_t *prev_in = NULL, *it = inactive_clients;
-						while (it) {
-							if (strcmp(it->id, id) == 0)
-								break;
-							prev_in = it;
-							it = it->next;
-						}
-
-						if (it) {
-							// reconnect existing client
-							client_t *reconn = it;
-							// unlink from inactive
-							if (prev_in)
-								prev_in->next = reconn->next;
-							else
-								inactive_clients = reconn->next;
-
-							reconn->fd = newfd;
-							reconn->read_buf_len = 0;
-							reconn->next = clients;
-							clients = reconn;
-							client_count++;
-
-							printf("New client %s connected from %s:%d.\n",
-								   reconn->id,
-								   inet_ntoa(cli.sin_addr),
-								   ntohs(cli.sin_port));
-						} else {
-							// brand‑new client
-							client_t *nc = client_create(newfd, id);
-							if (nc) {
-								nc->next = clients;
-								clients = nc;
-								client_count++;
-								printf("New client %s connected from %s:%d.\n",
-									   nc->id,
-									   inet_ntoa(cli.sin_addr),
-									   ntohs(cli.sin_port));
-							} else {
-								close(newfd);
-							}
-						}
-					}
-				} else {
-					close(newfd);
-				}
-			}
+			handle_new_tcp_connection(tcp_fd,
+									  &clients,
+									  &inactive_clients,
+									  &client_count);
 		}
 		idx++;
 
