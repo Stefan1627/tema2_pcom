@@ -28,8 +28,8 @@
 // packed 2‑byte type + 4‑byte payload length
 #pragma pack(push,1)
 typedef struct {
-    uint16_t type;
-    uint32_t length;
+	uint16_t type;
+	uint32_t length;
 } MsgHeader;
 #pragma pack(pop)
 
@@ -38,6 +38,6 @@ int send_all(int fd, const void *buf, size_t len);
 
 // build header + payload, then send both
 int send_message(int fd, uint16_t type,
-                 const void *payload, uint32_t len);
+				 const void *payload, uint32_t len);
 
 #endif // PROTOCOL_H

@@ -10,13 +10,13 @@ typedef struct topic_node topic_node_t;
 typedef struct sub_ref sub_ref_t;
 
 typedef struct client {
-    int             fd;             // socket
-    char            id[16];         // client identifier
-    char            read_buf[READ_BUF_SIZE];
-    size_t          read_buf_len;   // how many bytes are in read_buf
-    struct client  *next;
+	int fd;							// socket
+	char id[16];					// client identifier
+	char read_buf[READ_BUF_SIZE];
+	size_t read_buf_len;			// how many bytes are in read_buf
+	struct client *next;
 
-	sub_ref_t    *subscriptions;
+	sub_ref_t *subscriptions;
 } client_t;
 
 // Allocate, initialize (incl. TCP_NODELAY), return NULL on error

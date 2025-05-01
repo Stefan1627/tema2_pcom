@@ -11,12 +11,6 @@ ssize_t build_packet(struct sockaddr_in *src,
 					 char *buf,
 					 ssize_t payload_len)
 {
-	if (src != NULL
-		|| !buf
-		|| payload_len < 0
-		|| payload_len > MAX_UDP_PAYLOAD)
-		return -1;
-
 	char header[INET_ADDRSTRLEN + 1 + 6 + 2];
 	int header_len = snprintf(
 		header, sizeof(header),
@@ -163,7 +157,6 @@ void run_server(int port)
 				n = build_packet(&src, buf, n);
 				if (n > 0)
 					trie_publish(root, topic, buf, n);
-
 				free(topic);
 			}
 		}
