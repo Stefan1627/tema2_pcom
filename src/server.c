@@ -155,8 +155,12 @@ void run_server(int port)
 			if (n > 0)
 			{
 				char *topic = extract_topic(buf);
-				n = build_packet(&src, buf, n);
+				if (strlen(topic) > MAX_TOPIC_LEN) {
+					perror("Topic too long");
+					exit(1);
+				}
 
+				n = build_packet(&src, buf, n);
 				if (n > 0)
 					trie_publish(root, topic, buf, n);
 
