@@ -43,6 +43,7 @@ Sends a framed message consisting of a 6-byte header followed by an optional pay
       uint32_t length; // payload length, network byte order
   } MsgHeader;
 
+---
 
 # Server
 
@@ -90,6 +91,7 @@ Entry point:
 - Calls `run_server(atoi(argv[1]))`.
 - Returns `0` on normal exit, `1` on usage error.
 
+---
 
 # Topic Trie
 
@@ -163,6 +165,8 @@ topic_node_t *root = node_create(NULL, CHILD_NAME, NULL);
 trie_subscribe(root, client, "sensors/+/temperature");
 trie_publish(root, "sensors/kitchen/temperature", payload, payload_len);
 cleanup_client_subscriptions(root, client);
+```
+---
 
 # Client–Server Utilities
 
