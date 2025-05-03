@@ -79,13 +79,15 @@ int client_handle_data(topic_node_t *root, client_t *c)
 		case MSG_SUBSCRIBE:
 			if (trie_subscribe(root, c, payload) < 0)
 				return -1;
-			send_message(c->fd, MSG_SUBSCRIBE_ACK, payload, len);
+			if (send_message(c->fd, MSG_SUBSCRIBE_ACK, payload, len) < 0)
+				return -1;
 			break;
 
 		case MSG_UNSUBSCRIBE:
 			if (trie_unsubscribe(root, c, payload) < 0)
 				return -1;
-			send_message(c->fd, MSG_UNSUBSCRIBE_ACK, payload, len);
+			if (send_message(c->fd, MSG_UNSUBSCRIBE_ACK, payload, len) < 0)
+				return -1;
 			break;
 
 		default:

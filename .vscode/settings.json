@@ -57,16 +57,16 @@
   "C_Cpp_Runner.useLinkTimeOptimization": false,
   "C_Cpp_Runner.msvcSecureNoWarnings": false,
   "files.associations": {
-	"errno.h": "c",
-	"string.h": "c",
-	"in.h": "c",
-	"tcp.h": "c",
-	"inet.h": "c",
-	"socket.h": "c",
-	"client_server.h": "c",
-	"topic_trie.h": "c",
-	"stdio.h": "c",
-	"stdbool.h": "c",
-	"protocol.h": "c"
-}
+    "errno.h": "c",
+    "string.h": "c",
+    "in.h": "c",
+    "tcp.h": "c",
+    "inet.h": "c",
+    "socket.h": "c",
+    "client_server.h": "c",
+    "topic_trie.h": "c",
+    "stdio.h": "c",
+    "stdbool.h": "c",
+    "protocol.h": "c"
+  }
 }

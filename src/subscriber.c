@@ -7,7 +7,7 @@
 
 // recv_all: read exactly `len` bytes from `sockfd` into `buf`
 // returns number of bytes read (== len), 0 on orderly shutdown, or -1 on error
-static ssize_t recv_all(int sockfd, void *buf, size_t len)
+ssize_t recv_all(int sockfd, void *buf, size_t len)
 {
 	size_t total = 0;
 	char *p = buf;
